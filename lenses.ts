@@ -8,6 +8,15 @@ import { constant, flow, pipe } from '@fp-ts/data/Function';
 
 type Lens<S, T, A, B> = <F extends TypeLambda>(F: Covariant<F>) => <R, O, E>(m: (a: A) => Kind<F, R, O, E, B>) => (s: S) => Kind<F, R, O, E, T>;
 
+/**
+
+  Lens<S, T, A, B>  -->  Lens<A, B, W, Z>
+
+  L1 :: (a -> f b) -> s -> f t
+  L2 :: (w -> f z) -> a -> f b
+
+*/
+
 type MonoLens<S, A> = Lens<S, S, A, A>;
 
 const view: <S, T, A, B>(lens: Lens<S, T, A, B>) => (s: S) => A = (lens) => (s) =>
@@ -33,20 +42,18 @@ const second = <A, B, X>(): Lens<readonly [X, A], readonly [X, B], A, B> =>
     F.map((newSecond) => [first, newSecond] as const)
   );
 
-const id = <A>() => <B>(): Lens<A, B, A, B> =>
+const id = <A>() => <B = A>(): Lens<A, B, A, B> =>
   (_) => (m) => (s) => m(s);
 
+type ReplaceFieldWith<S extends Record<string, unknown>, F extends keyof S, N> = { [K in keyof S]: K extends F ? N : S[K] }
+
 const prop =
-   <S,
-    A,
-    Field extends keyof A,
-    T = S,
-    B = A
-  >(field: Field) =>
-  (lens: Lens<S, T, A, B>): Lens<S, { [K in keyof A]: K extends Field ? B : A[K] }, A[Field], B> =>
+   <S extends Record<string, unknown>,
+    Field extends keyof S = never,
+  >(field: Field) => <B = S[Field]>(): Lens<S, ReplaceFieldWith<S, Field, B>, S[Field], B> =>
     (F) => (m) => (s) => pipe(
-      lens(F)((a) => m(a[field]))(s),
-      F.map((t) => t[field])
+      m(s[field]),
+      F.map((value) => ({ ...s, [field]: value}) as ReplaceFieldWith<S, Field, B>)
     );
 
 // examples
@@ -62,4 +69,14 @@ type MyStruct = {
 }
 
 const myStructLens = id<MyStruct>();
-const xLens = pipe(myStructLens(), prop('x'));
+
+const zLens = <F extends TypeLambda>(F: Covariant<F>) => flow(
+  prop<MyStruct['x']['y'], 'z'>('z')()(F),
+  prop<MyStruct['x'], 'y'>('y')()(F),
+  prop<MyStruct, 'x'>('x')()(F),
+  myStructLens()(F)
+);
+
+const myStruct: MyStruct = { x: { y: { z: 12 }}};
+
+const newStruct = over(zLens)((z) => z.toString())(myStruct);
